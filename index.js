@@ -24,12 +24,7 @@ var dummyport = function() {
 	return Math.random() * (9150 - 9101) + 9101
 };
 
-var register = function(options) {
-	var name    = options.name;
-	var version = options.version;
-	var host    = options.host;
-	var port    = options.port;
-
+var _register = function(name, version, host, port) {
 	return Q.all([
 		Q.ninvoke(redis, 'hmset', 'services:' + name + ':' + version,
 			'name',    name,
@@ -40,6 +35,15 @@ var register = function(options) {
 		Q.ninvoke(redis, 'sadd', 'service-versions:' + name, version)
 			.then(Q.ninvoke(redis, 'sort', 'service-versions:' + name, 'ALPHA', 'DESC'))
 	]);
+};
+
+var register = function(options) {
+	var name    = options.name;
+	var version = options.version;
+	var host    = options.host;
+	var port    = options.port;
+
+	return _register(name, version, host, port);
 };
 
 var unregister = function(options, cb) {
@@ -55,6 +59,66 @@ var unregister = function(options, cb) {
 var query = function(options, cb) {
 	// TODO: implement
 };
+
+var handlerRegister = function(buf) {
+	// this is just fixed lengths, you could delimit or send the lengths
+	// might make more sense to just delmit with lflf or something
+	var offset = 0;
+
+	var name = buf.readString(offset, 128);
+	offset += 128;
+
+	var version = buf.toString(offset, 32);
+	offset += 32;
+
+	var host = buf.toString(offset, 128);
+	offset += 128;
+
+	var port = buf.readUint16LE(offset);
+
+	return _register(name, version, host, port);
+};
+
+var onData = function(cb) {
+	var buf;
+	var len;
+
+	var offset = 0;
+
+	return function(err, data) {
+		if(err) return cb(err);
+
+		var srcOffset = 0;
+
+		if(buf === undefined) {
+			len = data.readUInt32LE(0);
+			// TODO: length validate
+
+			buf = new Buffer(len);
+			srcOffset = 4;
+		};
+
+		data.copy(buf, offset, srcOffset);
+		offset += (data.length - srcOffset);
+
+		if(offset === len) {
+			return cb(null, bufer);
+		};
+	};
+};
+
+server.on("data", onData(function(err, data) {
+	if(err) throw(err);
+
+	var cmd = data.readUInt8(0);
+
+	switch(cmd) {
+		case REGISTER:
+			return handleRegister(data.slice(1));
+		default:
+			return console.log("Unknown command = " + cmd);
+	};
+});
 
 server.on('listening', function() {
 });
